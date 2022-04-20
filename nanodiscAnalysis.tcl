@@ -10,16 +10,15 @@ proc getAverageStandardDeviation { listOfNumbers } {
 	# "list of Numbers" : A list of numbers which
 	# will be manipulated.
 
-	if { ![ llength $listofNumbers ] } {
+	if { ![ llength $listOfNumbers ] } {
 		error "The list provided is empty and cannot calcualte the statistical measures."
 	}
 
-	set total 0.0; set total2 0.0
 	set sum 0.0; set sum2 0.0
 	set numDataPoints [ llength $listOfNumbers ]
 	foreach dataPoint $listOfNumbers {
-		set total [ expr { $sum + $dataPoint } ]
-		set total2 [ expr { $sum2 + $datapoint**2 } ]
+		set sum [ expr { $sum + $dataPoint } ]
+		set sum2 [ expr { $sum2 + $dataPoint**2 } ]
 		unset dataPoint
 	}
 	set average [ expr { $sum / $numDataPoints } ]
@@ -34,7 +33,7 @@ proc getAverageStandardDeviation { listOfNumbers } {
 		puts "standard deviation of '0.0'."
 		set standardDeviation 0.0
 	}
-	unset total total2 sum sum2
+	unset sum sum2
 	unset numDataPoints average2
 
 	return [ list $average $standardDeviation ]
@@ -73,12 +72,12 @@ proc getNanodiscDiameter { atomSelection numFrames outFileName} {
 	}
 	set outFile [ open "${outFileName}.txt" w+ ] 
 
-	puts -nonewline "Measuring the diameter of the nanodisc..."
+	puts "Measuring the diameter of the nanodisc..."
 	set all [ atomselect top "all" ]
 	set nanodisc [ atomselect top "$atomSelection" ]
 	set nanodiscAtomNum [ $nanodisc num ]
 	set nanodiscAtoms [ $nanodisc get index ]
-	set accumulatedDiameter 0.0; set accumulatedDiameter2 0.0
+	#set accumulatedDiameter 0.0; set accumulatedDiameter2 0.0
 
 	# Loop over frames with each iteration calculating the estimated radius of the 
 	# nanodisc based on the average distance of "atomSelection" from the origin
@@ -99,6 +98,7 @@ proc getNanodiscDiameter { atomSelection numFrames outFileName} {
 		
 		}
 		#set frameRadius [ expr { $radiusValues / $nanodiscAtomNum } ]
+		puts $radiusValues
 		set frameRadius [ lindex [ getAverageStandardDeviation $radiusValues ] 0 ]
 		set frameDiameter [ expr { 2 * $frameRadius } ]
 		puts "Frame Diameter is $frameDiameter"
@@ -124,8 +124,8 @@ proc getNanodiscDiameter { atomSelection numFrames outFileName} {
 	puts $outFile "# $averageDiameter $stdDevDiameter"
 	close $outFile
 	
-	unset accumulatedDiameter accumulatedDiameter2
-	unset averageDiameter averageDiameter2 stdDevDiameter
+	#unset accumulatedDiameter accumulatedDiameter2
+	unset averageDiameter stdDevDiameter
 }
 
 proc leafletSorter { atomSelection } {
@@ -136,6 +136,10 @@ proc leafletSorter { atomSelection } {
 	# "atomSelection" : A (currently) one atom selection to use 
 	# as the determinant for being either above or below membrane 
 	# midplane.
+
+	if { ![ $atomSelection num ] } {
+		error "Your atom selection contains no atoms with which to sort. Try again."
+	}
 
 	puts "Sorting lipids into upper and lower leaflets"
 	set upperLipids ""
