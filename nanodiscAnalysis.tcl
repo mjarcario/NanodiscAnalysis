@@ -264,8 +264,9 @@ proc initialize2DArray { numI numJ } {
 		for { set j 0 } { $j < $numJ } { incr j 1 } {
 			set matrix($i,$j) 0.0
 		}
+		unset j
 	}
-	unset i j
+	unset i
 	
 	return [ array get matrix ]
 }
@@ -367,6 +368,7 @@ proc alignToFirstFrame { atomSelection numFrames } {
 		$allAtoms frame $i
 		$trajectorySelection frame $i
 		$allAtoms move [ measure fit $trajectorySelection $referenceSelection ]
+		$allAtoms moveby [ vecinvert [ measure center $referenceSelection ] ]
 	}
 	$referenceSelection delete
 	$allAtoms delete
