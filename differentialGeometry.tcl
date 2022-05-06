@@ -92,13 +92,13 @@ proc makeMongeSurface { radialResolution radialMax numThetaBins atomSelection re
 	for { set i 0 } { $i < $numRadialBins } { incr i 1 } { 
 		for { set j 0 } { $j < $numThetaBins } { incr j 1 } {
 			if { !$upperBinCounter($i,$j) } {
-				set upperBins($i,$j) 0.0
+				set upperBins($i,$j) "none"
 			} else {
 				set avgBinHeight [ expr { $upperBins($i,$j) / $upperBinCounter($i,$j) } ]
 				set upperBins($i,$j) $avgBinHeight
 			}
 			if { !$lowerBinCounter($i,$j) } {
-				set lowerBins($i,$j) 0.0
+				set lowerBins($i,$j) "none"
 			} else {
 				set avgBinHeight [ expr { $lowerBins($i,$j) / $lowerBinCounter($i,$j)  } ]
 				set lowerBins($i,$j) $avgBinHeight
