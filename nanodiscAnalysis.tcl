@@ -141,7 +141,7 @@ proc getNanodiscDiameter { atomSelection numFrames outFileName} {
 	unset averageDiameter stdDevDiameter
 }
 
-proc getNanodiscEllipse { atomSelection numFrames } {
+proc getNanodiscEllipse { atomSelection numFrames outputFile } {
 	# Obtains the xy-coordinates of the atomSelection and 
 	# transfers this data to a python script which 
 	# calculates the ellipse of best fit and returns 
@@ -159,11 +159,14 @@ proc getNanodiscEllipse { atomSelection numFrames } {
 	
 	puts "Generating an ellipse of best fit for the nanodisc"
 	
+	set outFile [ open "${outputFile}.txt" w+ ]
+
 	alignToFirstFrame $atomSelection $numFrames
 	set all [ atomselect top "all" ]
 	set nanodisc [ atomselect top $atomSelection ]
 	set nanodiscAtoms [ $nanodisc get index ]
 	for { set i 0 } { $i < $numFrames } { incr i 1 } { 
+		puts "Analyzing frame $i"
 		$all frame $i
 		$nanodisc frame $i
 		#set tempFile [ open "nanodiscCoordinates.txt" w+ ]
@@ -178,7 +181,8 @@ proc getNanodiscEllipse { atomSelection numFrames } {
 		unset index coordinates
 		#close $tempFile
 
-		set axes [ split [ exec python3 /home/marcario/scripts/ellipse.py ${xNanodiscCoordinates} ${yNanodiscCoordinates} ] ]
+		puts "Fitting ellipse"
+		set axes [ split [ exec python3 /home/marcario/scripts/nanodisc/ellipse.py ${xNanodiscCoordinates} ${yNanodiscCoordinates} ] ]
 		#set axes [ split [ exec python3 /home/marcario/scripts/ellipse.py ] ]
 		#file delete nanodiscCoordinates.txt
 		#unset tempFile
@@ -188,7 +192,7 @@ proc getNanodiscEllipse { atomSelection numFrames } {
 		set majorAxis [ expr { 2 * [ lindex $axes 1 ] } ]
 		#set eccentricity [ expr { sqrt( 1 - ( $minorAxis**2 / $majorAxis**2  )  ) } ]
 		set flat [ expr { 1 - ( $minorAxis / $majorAxis ) } ]
-		#puts $outFile "$i $majorAxis $eccentricity"
+		puts $outFile "$i $majorAxis $flat"
 		puts "Frame major axis is $majorAxis. Flattening is $flat."
 		lappend totalMajorAxis $majorAxis
 		#lappend totalEccentricity $eccentricity
@@ -206,10 +210,12 @@ proc getNanodiscEllipse { atomSelection numFrames } {
 	set flatteningStatistics [ getAverageStandardDeviation $totalFlattening ]
 	puts "Average Nanodisc Diameter is [ lindex $diameterStatistics 0 ] +/- [ lindex $diameterStatistics 1 ]."
 	puts "Average Nanodisc Flattening is [ lindex $flatteningStatistics 0 ] +/- [ lindex $flatteningStatistics 1 ]."
-	#puts $outFile "# [ lindex $diameterStatistics 0 ] [ lindex $diameterStatistics 1 ] [lindex $flatteningStatistics 0 ] [ lindex $flatteningStatistics 1 ]"
+	puts $outFile "# [ lindex $diameterStatistics 0 ] [ lindex $diameterStatistics 1 ] [lindex $flatteningStatistics 0 ] [ lindex $flatteningStatistics 1 ]"
 	#close $outFile
 	unset totalMajorAxis totalFlattening
 	unset diameterStatistics flatteningStatistics
+
+	close $outFile
 		
 }		
 
@@ -283,6 +289,18 @@ proc initialize1DArray { numI } {
 	return [ array get matrix ]
 }
 
+proc initialize1DArraySpecial { numList } { 
+	# Initializes a 1D array with 
+	# a specific list of numbers as
+	# the keys
+
+	foreach number $numList {
+		set matrix($number) 0.0
+		unset number
+	}
+	return [ array get matrix ]
+}
+
 proc getAtomsDistanceFromProtein { atomSelection proteinSelection innerRadius outerRadius frameNum } { 
 	# Obtains a list of atoms between the inner and outer radii
 	# defined relative to the protein surface. Returns a list 
@@ -343,14 +361,18 @@ proc getMembraneMidplane { atomSelection } {
 
 }
 
-proc getMembraneHeight { atomIndices membraneMidplane frameNum } { 
+proc getMembraneHeight { atomIndices membraneMidplane leaflet frameNum } { 
 	# Calculates the geometric center of a group of atoms
 	# and returns the z-coordinate of that center as
 	# the height above the midplane.
 
 	set membraneAtoms [ atomselect top "index $atomIndices" frame $frameNum ] 
 	set membraneZ [ lindex [ measure center $membraneAtoms ] 2 ]
-	set membraneHeight [ expr { $membraneZ - $membraneMidplane  } ]
+	if { [ string match $leaflet upper ] } {
+		set membraneHeight [ expr { $membraneZ - $membraneMidplane  } ]
+	} elseif { [ string match $leaflet lower ] } { 
+		set membraneHeight [ expr { $membraneMidplane - $membraneZ } ]
+	}
 	$membraneAtoms delete
 	unset membraneZ
 	return $membraneHeight
@@ -377,6 +399,22 @@ proc alignToFirstFrame { atomSelection numFrames } {
 	puts "Trajectory aligned"
 }
 
+proc findZeroesInArray { arrayName  } {
+	# Takes an array as input and 
+	# returns a list containing all keys
+	# in the array that are zero.
+	
+	upvar $arrayName arrName
+	foreach { key value } [ array get arrName ] {
+		if { ![ expr { int($value)  } ] } {
+			lappend zeroList $key
+			puts "$key has a zero value"
+		}
+	}
+
+	return $zeroList
+}
+
 proc membraneHeightFromProtein { atomSelection proteinSelection nanodiscSelection distanceFromProtein binResolution numFrames } {
 	# Calculates the average height of an atomselection 
 	# as a function of distance from the protein
@@ -385,6 +423,8 @@ proc membraneHeightFromProtein { atomSelection proteinSelection nanodiscSelectio
 	# define the height of the membrane.
 	# "proteinSelection" : A string input for which atoms 
 	# will define the surface of the protein.
+	# "nanodiscSelection" : "A string input which represents atoms
+	# of the nanodisc used for alignment in this calculation.
 	# "distanceFromProtein" : A numeric input which represents 
 	# the total distance from the protein surface for which 
 	# membrane height will be calculated.
@@ -392,6 +432,8 @@ proc membraneHeightFromProtein { atomSelection proteinSelection nanodiscSelectio
 	# "numFrames" A numeric which tells how many frames will be analyzed. 
 	# For now, the analysis starts at frame 0 and marches forward
 	# until "numFrames" is analyzed.
+	# Outsput is a text file containing upper height +/- SD, lower height +/- SD,
+	# and membrane thickness +/- SD relative to membrane surface
 
 	puts "Calculating membrane thickness. Hold tight."
 	set outFile [ open "membraneThickness.txt" w+ ]
@@ -459,7 +501,7 @@ proc membraneHeightFromProtein { atomSelection proteinSelection nanodiscSelectio
 			# for calculation of averages later.
 			puts -nonewline "For bin [ lindex $bin 0 ] - [ lindex $bin 1 ], " 
 			if { [ lsearch $upperLipidIndices -1 ] == -1 } {
-				set upperHeight [ getMembraneHeight $upperLipidIndices $membraneMidplane $i ]
+				set upperHeight [ getMembraneHeight $upperLipidIndices $membraneMidplane "upper" $i ]
 				set upperHeights($j) [ expr { $upperHeights($j) + $upperHeight  } ]
 				set upperHeights2($j) [ expr { $upperHeights2($j) + $upperHeight**2  } ]
 				set upperFrames($j) [ expr { $upperFrames($j) + 1 } ]
@@ -469,7 +511,7 @@ proc membraneHeightFromProtein { atomSelection proteinSelection nanodiscSelectio
 			}
 				
 			if { [ lsearch $lowerLipidIndices -1 ] == -1 } { 
-				set lowerHeight [ getMembraneHeight $lowerLipidIndices $membraneMidplane $i ]
+				set lowerHeight [ getMembraneHeight $lowerLipidIndices $membraneMidplane "lower" $i ]
 				set lowerHeights($j) [ expr { $lowerHeights($j) + $lowerHeight  } ]
 				set lowerHeights2($j) [ expr { $lowerHeights2($j) + $lowerHeight**2 } ]
 				set lowerFrames($j) [ expr { $lowerFrames($j) + 1 } ]
@@ -489,6 +531,21 @@ proc membraneHeightFromProtein { atomSelection proteinSelection nanodiscSelectio
 	}
 	unset i
 
+	#set upperHeightZeroes [ findZeroesInArray upperHeights ]
+	#set lowerHeightZeroes [ findZeroesInArray lowerHeights ]
+	#set upperFirstZero [ lindex [ lsort -increasing -integer $upperHeightZeroes ] 0 ]
+	#if { $upperFirstZero == 0 } { 
+	#	set upperFirstZero [ lindex [ lsort -increasing -integer $upperHeightZeroes ] 1 ]
+	#}
+	#set lowerFirstZero [ lindex [ lsort -increasing -integer $lowerHeightZeroes ] 0 ]
+	#if { $lowerFirstZero == 0 } {
+	#	set lowerFirstZero [ lindex [ lsort -increasing -integer $lowerHeightZeroes ] 1 ]
+	#}
+	#set firstZeroDifference [ expr { $lowerFirstZero - $upperFirstZero } ]
+	#puts "First time to zero is $upperFirstZero, $lowerFirstZero"
+	#unset upperHeightZeroes lowerHeightZeroes
+	#unset upperFirstZero lowerFirstZero
+
 	# Calculate the average height and standard deviation for each bin.
 	# This is messy. May make a procedure later to do this and clean up.
 	for { set i 0 } { $i < [ array size upperHeights ] } { incr i 1 } {
@@ -498,8 +555,8 @@ proc membraneHeightFromProtein { atomSelection proteinSelection nanodiscSelectio
 			#puts "Average of squares $upperBinAverage2, square of average [ expr { $upperBinAverage**2  } ]"		
 			set upperStandardDeviation [ expr { sqrt( $upperBinAverage2 - $upperBinAverage**2  )  } ]
 		} else {
-			set upperBinAverage 0.0
-			set upperStandardDeviation 0.0
+			set upperBinAverage ""
+			set upperStandardDeviation ""
 		}
 
 		if { $lowerFrames($i) } {
@@ -508,22 +565,195 @@ proc membraneHeightFromProtein { atomSelection proteinSelection nanodiscSelectio
 			#puts "Average of squares $lowerBinAverage2, square of average [ expr { $lowerBinAverage**2  } ]"
 			set lowerStandardDeviation [ expr { sqrt( $lowerBinAverage2 - $lowerBinAverage**2  )  } ]
 		} else {
-			set lowerBinAverage 0.0
-			set lowerStandardDeviation 0.0
+			set lowerBinAverage ""
+			set lowerStandardDeviation ""
 		}
-		set thicknessBinAverage [ expr { $upperBinAverage - $lowerBinAverage } ]
-		set thicknessBinStandardDeviation [ expr { sqrt( $upperStandardDeviation**2 + $lowerStandardDeviation**2  )  } ]
+		if { [ llength $upperBinAverage ] == 0 || [ llength $lowerBinAverage ] == 0 } {
+			set thicknessBinAverage ""
+			set thicknessBinStandardDeviation ""
+		} else {
+			#set j [ expr { $i + $firstZeroDifference  } ]
+			#set lowerBinForHeight [ expr { $lowerHeights($j) / $lowerFrames($j) } ]
+			#set lowerBinForHeight2 [ expr { $lowerHeights2($j) / $lowerFrames($j)  } ]
+			#set lowerStandardDeviationForHeight [ expr { sqrt( $lowerBinAverage2 - $lowerBinAverage**2  )  } ]
+			set thicknessBinAverage [ expr { $upperBinAverage + $lowerBinAverage } ]
+			set thicknessBinStandardDeviation [ expr { sqrt( $upperStandardDeviation**2 + $lowerStandardDeviation**2  )  } ]
+		}
 		puts $outFile " [ lindex [ lindex $bins $i ] 0 ] $upperBinAverage $upperStandardDeviation $lowerBinAverage $lowerStandardDeviation $thicknessBinAverage $thicknessBinStandardDeviation"
 		puts "For bin $i, upper height is $upperBinAverage +/- $upperStandardDeviation, lower height \
 		is $lowerBinAverage +/- $lowerStandardDeviation, and average thickness is $thicknessBinAverage \
 		+/- $thicknessBinStandardDeviation"
 	}
 	unset upperHeights lowerHeights upperHeights2 lowerHeights2
-	unset upperFrames lowerFrames
+	unset upperFrames lowerFrames 
 	unset upperBinAverage lowerBinAverage thicknessBinAverage thicknessBinStandardDeviation
-	unset -nocomplain upperBinAverage2 lowerBinAverage2
+	unset -nocomplain upperBinAverage2 lowerBinAverage2 lowerBinForHeight lowerBinForHeight2 lowerStandardDeviationForHeight
 	close $outFile
 
 	puts "Calculation of membrane THICC-ness complete."
 	puts "Hold on to those curves!"
 }
+
+proc proteinNanodiscInteractions { proteinSelection nanodiscSelection interactionDistance inputPDB } { 
+
+	set numFrames [ molinfo top get numframes ]
+	
+	# Gets the total number of residues being analyzed in order
+	# to create the array to store data
+	set protein [ atomselect top $proteinSelection ]
+	set proteinResidues [ $protein get resid ]
+	for { set i 0 } { $i < [ llength $proteinResidues ] } { incr i 1 } { 
+		if { !$i } {
+			lappend proteinResidList [ lindex $proteinResidues $i ]
+			continue
+		}
+		set resid [ lindex $proteinResidues $i ]
+		if { [ lsearch $proteinResidList $resid ] == -1 } {
+			lappend proteinResidList $resid
+			unset resid
+		}
+	}
+	unset i proteinResidues
+	$protein delete
+	
+	# Sets the array for monitoring interactions and modifies it so the key
+	# is the resid number and not a serial numbering
+	array set interactionArray [ initialize1DArraySpecial $proteinResidList ]
+	#for { set i 0 } { $i < [ llength $proteinResidList ] } { incr i 1 } { 
+	#	set resid [ lindex $proteinResidList $i ]
+	#	set interactionArray($resid) $interactionArray($i)
+	#	unset interactionArray($i)
+	#	unset i resid
+	#}
+
+	set overlappingResidues [ atomselect top "$proteinSelection and same residue as (within $interactionDistance of ($nanodiscSelection))" ]
+	
+	for { set i 0 } { $i < $numFrames } { incr i 1 } {
+		puts "Analyzing frame $i"
+		$overlappingResidues frame $i
+		$overlappingResidues update
+		set overlappingResids [ $overlappingResidues get resid ]
+		if { ![ llength $overlappingResids ] } {
+			puts "No overlapping residues for frame $i"
+			continue
+		}
+		set overlappingResidList [ lsort -unique $overlappingResids ]
+		puts "Overlapping residues are $overlappingResidList"
+		foreach resid $overlappingResidList {
+			set interactionArray($resid) [ expr { $interactionArray($resid) + 1.0  } ]
+			unset resid
+		}
+		unset -nocomplain overlappingResids overlappingResidList
+	}
+	$overlappingResidues delete
+
+	puts "Creating PDB of results"
+	set inputMolNum [ mol load pdb $inputPDB ]
+	set all [ atomselect $inputMolNum "all" ]
+	$all set occupancy "0.0"
+	foreach resid $proteinResidList {
+		set interactionArray($resid) [ expr { $interactionArray($resid) / $numFrames  } ]
+		puts "Residue $resid is in direct contact with the nanodisc scaffold $interactionArray($resid) of the time"
+		set residue [ atomselect $inputMolNum "protein and resid $resid" ]
+		$residue set occupancy "$interactionArray($resid)"
+		$residue delete
+	}
+	$all writepdb proteinNanodiscContacts.pdb
+	$all delete
+	mol delete $inputMolNum
+
+}
+
+proc measureRMSD {   } {
+
+}
+
+proc measureRMSF { atomSelection rmsfAtom numFrames outputFile inputPDB  } {
+	# Measures the RMSF of the atomselection
+	# and outputs the result to a txt file and 
+	# onto a pdb backbone.
+	#
+	# atomSelection should be a single atom per residue.
+	
+	set outfile [ open "${outputFile}.txt" w+ ]
+
+	alignToFirstFrame $atomSelection $numFrames
+	set selection [ atomselect top $atomSelection ]
+	set selectionResidues [ $selection get resid ]
+	set selectionResidues [ lsort -increasing -unique -integer $selectionResidues ]
+	array set rmsfValues [ initialize1DArraySpecial $selectionResidues ]
+	$selection delete
+
+	foreach residue $selectionResidues {
+		puts -nonewline "Analyzing RMSF of residue $residue."
+		set rmsfSelection [ atomselect top "$atomSelection and resid $residue and $rmsfAtom" ]
+		set rmsf [ measure rmsf $rmsfSelection ]
+		puts " RMSF is $rmsf."
+		puts $outfile "$residue $rmsf"
+		set rmsfValues($residue) $rmsf
+		$rmsfSelection delete
+		unset rmsf residue
+	}
+	close $outfile
+
+	puts "Creating PDB of RMSF results"
+	set molNum [ mol load pdb ${inputPDB} ]
+	set all [ atomselect $molNum "all" ]
+	$all set occupancy 0.0
+	foreach residue $selectionResidues {
+		set selection [ atomselect $molNum "resid $residue" ]
+		$selection set occupancy $rmsfValues($residue)
+		$selection delete
+	}
+	$all writepdb ${outputFile}.pdb
+	$all delete
+	mol delete $molNum
+
+}
+
+proc getAverageRMSF { rmsfFileList outputFile inputPDB } {
+	# Calculates the average RMSF for each residue
+	# given the file prefixes.
+
+	set outfile [ open "${outputFile}.txt" w+ ]
+
+	set numEntries [ llength $rmsfFileList ]
+	puts "Number of files to read is $numEntries"
+
+	set fileData [ open [ lindex $rmsfFileList 0 ] ]
+	while { [ gets ${fileData} data ] >= 0 } {
+		set residue [ lindex $data 0 ]
+		lappend residueList $residue
+	} 
+	close $fileData
+	array set totalRMSF [ initialize1DArraySpecial $residueList ]
+
+	for { set i 0 } { $i < $numEntries } { incr i 1 } {
+		set fileData [ open [ lindex $rmsfFileList $i ] r ]
+		while { [ gets ${fileData} data ] >= 0 } {
+			set residue [ lindex $data 0 ]
+			set rmsf [ lindex $data 1 ]
+			set totalRMSF($residue) [ expr { $rmsf + $totalRMSF($residue) } ]
+			puts "Total RMSF is $i $totalRMSF($residue)"
+			unset data residue rmsf
+		}
+		close $fileData
+	}
+	unset i
+
+	# Sorts the array for printing to file
+	foreach { residue rmsf } [ array get totalRMSF ] {
+		lappend totalRMSFList [ list $residue $rmsf ]
+	}
+	puts [ lsort -increasing -index 0 -integer $totalRMSFList ]
+	foreach element [ lsort -increasing -index 0 -integer $totalRMSFList ] {
+		set avgRMSF [ expr { [ lindex $element 1 ] / $numEntries  } ]
+		puts "Average RMSF for residue [ lindex $element 0 ] is [ lindex $element 1 ] $avgRMSF"
+		puts $outfile "[ lindex $element 0 ] $avgRMSF"
+		unset avgRMSF element
+	}
+
+	close $outfile
+
+}	
+
