@@ -885,65 +885,6 @@ proc writeAlignedTrajectory { psfFile pdbFile listOfDCDFiles alignmentAtomSelect
 	$atomsToBeWritten delete
 }
 
-proc measureRMSD2D { atomSelection fitSelection inputPDB1 inputPDB2 trajectorySegmentNames numFrames outputFile } { 
-	# Takes a trajectory and measures the RMSD compared to 2 
-	# structures as a function of simulation time.
-
-	set outfile [ open "${outputFile}.txt" w+ ]
-	puts $outfile "# PDB1 is $inputPDB1, PDB2 is $inputPDB2"
-
-	set moleculeNum1 [ mol load pdb $inputPDB1 ]
-	set moleculeNum2 [ mol load pdb $inputPDB2 ]
-	set trajectoryMoleculeNum [ lindex [ lsort -integer -increasing [ molinfo list ] ] 0 ] ; # assumes the dcd is the lowest number ID, i.e., was loaded first
-	
-	set molecule1 [ atomselect $moleculeNum1 "chain A and $atomSelection" ]
-	set moleculeFit1 [ atomselect $moleculeNum1 "chain A and $fitSelection" ]
-	set molecule2 [ atomselect $moleculeNum2 "chain A and $atomSelection" ]
-	set moleculeFit2 [ atomselect $moleculeNum2 "chain A and $fitSelection" ]
-
-	set numSegments [ llength $trajectorySegmentNames ]
-	
-	for { set i 0 } { $i < $numFrames } { incr i 1 } { 
-		# There is some internal data structure besides index
-		# that VMD is using for "measure fit" which is preventing 
-		# an adequate fit for RMSD measurement. So this work around
-		# calculates the RMSD of each chain and takes the RMS of the sum
-		# to calculate for the whole selection.
-		set frameRmsd1 0.0
-		set frameRmsd2 0.0
-		foreach segmentName $trajectorySegmentNames {
-			set trajectoryFitSelection [ atomselect $trajectoryMoleculeNum "segname $segmentName and $fitSelection" frame $i ]
-			set trajectoryAllSelection [ atomselect $trajectoryMoleculeNum "all" frame $i ]
-			set trajectorySelection [ atomselect $trajectoryMoleculeNum "segname $segmentName and $atomSelection" frame $i ]
-			$trajectoryAllSelection move [ measure fit $trajectoryFitSelection $moleculeFit1 ]
-			set rmsd1 [ measure rmsd $trajectorySelection $molecule1 ]
-			$trajectoryAllSelection move [ measure fit $trajectoryFitSelection $moleculeFit2 ]
-			set rmsd2 [ measure rmsd $trajectorySelection $molecule2 ]
-			#puts "$rmsd1 $rmsd2"
-			set frameRmsd1 [ expr { $frameRmsd1 + $rmsd1**2 } ]
-			set frameRmsd2 [ expr { $frameRmsd2 + $rmsd2**2 } ]
-			unset rmsd1 rmsd2
-			$trajectoryFitSelection delete
-			$trajectoryAllSelection delete
-			$trajectorySelection delete
-		}
-		set frameRmsd1 [ expr { sqrt( $frameRmsd1 / $numSegments ) } ]
-		set frameRmsd2 [ expr { sqrt( $frameRmsd2 / $numSegments ) } ]
-		puts "Frame $i, RMSD1: $frameRmsd1; RMSD2: $frameRmsd2"
-		puts $outfile "$i $frameRmsd1 $frameRmsd2"
-		unset frameRmsd1 frameRmsd2
-	}
-	$molecule1 delete
-	$moleculeFit1 delete
-	$molecule2 delete
-	$moleculeFit2 delete
-	mol delete $moleculeNum1
-	mol delete $moleculeNum2
-	close $outfile
-	unset i moleculeNum1 moleculeNum2 trajectoryMoleculeNum
-	unset numSegments
-}
-
 proc helixMotion { proteinSelection segments headgroupSelection nanodiscSelection numFrames outputFile } {
 	# Calculates the spherical coordinates of the helix provided 
 	# to later be plotted with the plotting software of choice.
@@ -1060,44 +1001,6 @@ proc helixMotion { proteinSelection segments headgroupSelection nanodiscSelectio
 	close $outFile
 }
 
-proc proteinMotion { proteinSelection nanodiscSelection numFrames outputFile  } {
-	# Measures the position of the protein with the nanodisc as a reference point. 
-	# Will also calculate the mean-squared displacement as a function of time for 
-	# conversion into a diffusion coefficient.
-	global M_PI
-	
-	set outFile [ open "${outputFile}.txt" w+ ]
-	alignToFirstFrame $nanodiscSelection $numFrames
-
-	for { set i 0 } { $i < $numFrames } { incr i 1 } { 
-		# Calculates the displacement of the protein
-		set protein [ atomselect top $proteinSelection frame $i ]
-		set proteinCenter [ measure center $protein ]
-		if { $i == 0 } {
-			set initialLocation [ list [ lindex $proteinCenter 0 ] [ lindex $proteinCenter 1 ] ]
-			continue
-		}
-		set displacement [ vecdist $initialLocation [ list [ lindex $proteinCenter 0 ] [ lindex $proteinCenter 1 ] ] ]
-		set squaredDisplacement [ expr { $displacement**2 } ]
-		puts "MSD for frame $i is $squaredDisplacement"
-		
-		# Calculates the angle of the pore to the normal
-		set inertialCoordinates [ measure inertia $protein ]
-		set principalAxes [ lindex $inertialCoordinates 1 ]
-		set principalAxes [ lsort -increasing -index 2 -real $principalAxes ]
-		set poreAxis [ lindex $principalAxes end ]
-		set poreAxisAngle [ expr { ( 180 / $M_PI ) * acos( [ vecdot { 0 0 1 } $poreAxis ] ) } ]
-		
-		puts $outFile "$i [lindex $proteinCenter 0 ] [ lindex $proteinCenter 1 ] $squaredDisplacement $poreAxisAngle" 
-		$protein delete
-		unset proteinCenter
-		unset displacement squaredDisplacement
-		unset inertialCoordinates principalAxes poreAxis poreAxisAngle
-	}
-	
-	close $outFile
-}
-
 proc distanceFromGeometricCenterMeasurement { atomSelection numFrames } { 
 	# Measures the distance of a group of atoms from their geometric center
 	# atomSelection: VMD-style atom selection for which atoms should be evaluated
@@ -1172,33 +1075,6 @@ proc atomToPoreMeasurement { fragment atomName resids fittingGroup numFrames out
 		unset resid distanceData
 	}
 	puts "Finished analyzing distance from center!"
-	close $outFile
-}
-
-proc allAtomZPosition { atomName fittingGroup radiusAroundCenter numFrames outputFile } {
-	# Measures the z-position of every atom type and puts this in the output
-	# file.
-	# atomName : keyword for atoms under consideration
-	
-	set outFile [ open "${outputFile}.txt" w+ ]
-
-	alignToFirstFrame $fittingGroup $numFrames
-	set radiusSquared [ expr { $radiusAroundCenter**2 } ]
-	for { set i 0 } { $i < $numFrames } { incr i 1 } { 
-		puts "Analyzing frame $i"
-		set atomZPosition ""
-		set atoms [ atomselect top "resname $atomName and (x^2 + y^2 < $radiusSquared)" frame $i ]
-		set atomIndices [ $atoms get index ]
-		$atoms delete
-		foreach index $atomIndices {
-			set indexAtom [ atomselect top "index $index" frame $i ]
-			lappend atomZPosition [ $indexAtom get z ]
-			$indexAtom delete
-		}
-		puts $outFile "$i $atomZPosition"
-		unset atomZPosition atomIndices
-	}
-
 	close $outFile
 }
 
