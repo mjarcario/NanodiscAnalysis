@@ -11,3 +11,5 @@ in the main body of "nanodiscAnalysis.tcl". Ensure that the relative path for "p
 
 The "getNanodiscEllipse" function in nanodiscAnalysis.tcl requires an external python script called "ellipse.py"
 which takes the coordinates of the atoms and produces an ellipse of best-fit along with the major and minor axes.
+
+These scripts are associated with the pre-print https://doi.org/10.1101/2022.11.20.517256. 
